@@ -6,6 +6,9 @@ namespace PaperClone.Domain
 {
     public class PlayerModel : ReactiveModel
     {
+        public string Name { get; set; } = "Unknown";
+        public ReactiveProperty<float> TerritoryPercentage { get; } = new ReactiveProperty<float>(0f);
+        
         public ReactiveProperty<Vector3> Position { get; } = new ReactiveProperty<Vector3>();
         public ReactiveProperty<Quaternion> Rotation { get; } = new ReactiveProperty<Quaternion>();
         public ReactiveCollection<Vector3> Trail { get; } = new ReactiveCollection<Vector3>();
@@ -24,7 +27,7 @@ namespace PaperClone.Domain
         
         public void Kill(Vector3 respawnPos)
         {
-            Debug.Log($"Player {PlayerColor} Died! Respawning at {respawnPos}");
+            Debug.Log($"Player {Name} Died! Respawning at {respawnPos}");
             
             Trail.Clear();
             Position.Value = respawnPos;

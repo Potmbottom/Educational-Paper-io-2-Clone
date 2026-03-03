@@ -2,40 +2,65 @@
 using PaperClone.Domain;
 using PaperClone.Service;
 using PaperClone.Utils;
+using UniRx;
 using UnityEngine;
 using VContainer.Unity;
 
 namespace PaperClone.Application
 {
-    public class PlayerController : ITickable
+    public class PlayerController : ITickable, System.IDisposable
     {
         private readonly PlayerModel _model;
         private readonly LevelModel _levelModel;
         private readonly IInputProvider _input;
         private readonly TerritoryCalculator _calculator;
+        private readonly PlayerRegistry _registry;
+
+        private readonly CompositeDisposable _disposables = new CompositeDisposable();
 
         private Vector3 _lastTrailPos;
         private bool _isOutsideTerritory = false;
+
+        public PlayerModel Model => _model;
 
         public PlayerController(
             PlayerModel model, 
             LevelModel levelModel, 
             IInputProvider input,
-            TerritoryCalculator calculator) 
+            TerritoryCalculator calculator,
+            PlayerRegistry registry) 
         {
             _model = model;
             _levelModel = levelModel;
             _input = input;
             _calculator = calculator;
+            
+            _registry = registry;
+            _registry.Register(this);
+            
             _lastTrailPos = model.Position.Value;
+            
+            _model.OwnedTerritory.Subscribe(paths => 
+            {
+                double area = _calculator.CalculateTotalArea(paths);
+                double mapWidth = _levelModel.Bounds * 2.0; 
+                double totalArea = mapWidth * mapWidth;
+                _model.TerritoryPercentage.Value = (float)((area / totalArea) * 100.0);
+            }).AddTo(_disposables);
+        }
+
+        public void Dispose()
+        {
+            _registry.Unregister(this);
+            _disposables.Dispose();
         }
 
         public void Tick()
         {
             var dt = Time.deltaTime;
             var inputDir = _input.GetDirection();
+            var currentPos = _model.Position.Value;
 
-            // 1. Rotation
             if (inputDir != Vector3.zero)
             {
                 var targetRot = Quaternion.LookRotation(inputDir);
@@ -43,7 +68,7 @@ namespace PaperClone.Application
             }
             
             var forward = _model.Rotation.Value * Vector3.forward;
-            var nextPos = _model.Position.Value + (forward * _model.Speed * dt);
+            var nextPos = currentPos + (forward * _model.Speed * dt);
             
             var b = _levelModel.Bounds;
             nextPos.x = Mathf.Clamp(nextPos.x, -b, b);
@@ -51,18 +76,28 @@ namespace PaperClone.Application
             
             if (_isOutsideTerritory && _model.Trail.Count > 2)
             {
-                if (IsCrossingSelf(_model.Position.Value, nextPos))
+                if (IsCrossingSelf(currentPos, nextPos))
                 {
-                    HandleDeath();
+                    Die();
                     return; 
                 }
             }
-            
+
+            foreach (var otherController in _registry.AllControllers.ToList())
+            {
+                if (otherController == this) continue;
+
+                if (IsCrossingOther(currentPos, nextPos, otherController.Model))
+                {
+                    otherController.Die();
+                }
+            }
+
             _model.Position.Value = nextPos;
             UpdateTerritoryState(nextPos);
         }
 
-        private void HandleDeath()
+        public void Die()
         {
             var limit = _levelModel.Bounds - 3f;
             var rx = Random.Range(-limit, limit);
@@ -95,6 +130,29 @@ namespace PaperClone.Application
             return false;
         }
 
+        private bool IsCrossingOther(Vector3 currentPos, Vector3 nextPos, PlayerModel other)
+        {
+            var count = other.Trail.Count;
+            if (count == 0) return false;
+
+            for (var i = 0; i < count - 1; i++)
+            {
+                var p1 = other.Trail[i];
+                var p2 = other.Trail[i + 1];
+
+                if (GeometryUtils.IsSegmentIntersecting(currentPos, nextPos, p1, p2)) return true;
+            }
+
+            if (count > 0)
+            {
+                var lastTrail = other.Trail[count - 1];
+                var otherPos = other.Position.Value;
+                if (GeometryUtils.IsSegmentIntersecting(currentPos, nextPos, lastTrail, otherPos)) return true;
+            }
+
+            return false;
+        }
+
         private void UpdateTerritoryState(Vector3 currentPos)
         {
             var isInside = _calculator.IsPointInTerritory(_model.OwnedTerritory.Value, currentPos);
@@ -124,6 +182,23 @@ namespace PaperClone.Application
             _model.OwnedTerritory.Value = newTerritory;
             _model.Trail.Clear();
             _lastTrailPos = _model.Position.Value;
+
+            foreach (var otherController in _registry.AllControllers.ToList())
+            {
+                if (otherController == this) continue;
+
+                var otherModel = otherController.Model;
+                var reduced = _calculator.SubtractTerritory(otherModel.OwnedTerritory.Value, newTerritory);
+
+                if (reduced == null || reduced.Count == 0)
+                {
+                    otherController.Die();
+                }
+                else
+                {
+                    otherModel.OwnedTerritory.Value = reduced;
+                }
+            }
         }
     }
 }

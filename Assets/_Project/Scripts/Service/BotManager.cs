@@ -1,5 +1,4 @@
-﻿// --- FILE: BotManager.cs ---
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using PaperClone.Domain;
 using UnityEngine;
 using VContainer.Unity;
@@ -10,7 +9,7 @@ namespace PaperClone.Application
     {
         private readonly BotFactory _factory;
         private readonly GameConfiguration _config;
-        private readonly PlayerModel _humanModel; // To check distance for spawning
+        private readonly PlayerModel _humanModel;
 
         private readonly List<PlayerController> _activeControllers = new List<PlayerController>();
 
@@ -28,17 +27,16 @@ namespace PaperClone.Application
         {
             var humanPos = _humanModel.Position.Value;
 
-            for (int i = 0; i < _config.BotCount; i++)
+            for (var i = 0; i < _config.BotCount; i++)
             {
                 var spawnPos = GetSafeSpawnPosition(humanPos);
-                var (controller, _) = _factory.CreateBot(spawnPos, i);
+                var controller = _factory.CreateBot(spawnPos, i);
                 _activeControllers.Add(controller);
             }
         }
 
         public void Tick()
         {
-            // Centralized Loop for all bots
             foreach (var controller in _activeControllers)
             {
                 controller.Tick();
@@ -60,7 +58,6 @@ namespace PaperClone.Application
                     return candidate;
                 }
             }
-            // Fallback
             return new Vector3(limit * 0.5f, 0, limit * 0.5f);
         }
     }

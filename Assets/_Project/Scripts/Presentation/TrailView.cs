@@ -48,7 +48,7 @@ namespace PaperClone.Presentation
         {
             _initialized = true;
 
-            Color c = _model.PlayerColor;
+            var c = _model.PlayerColor;
             c.a = 0.5f;
             
             if (_lineRenderer.sharedMaterial == null) 

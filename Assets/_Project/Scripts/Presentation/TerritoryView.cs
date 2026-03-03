@@ -48,7 +48,7 @@ namespace PaperClone.Presentation
             _initialized = true;
             
             var renderer = GetComponent<MeshRenderer>();
-            Material mat = renderer.material;
+            var mat = renderer.material;
             mat.color = _model.PlayerColor;
             
             transform.position = new Vector3(0, -0.01f, 0);
@@ -74,7 +74,7 @@ namespace PaperClone.Presentation
 
             var vertices = new List<Vector3>();
             var triangles = new List<int>();
-            int vertIndex = 0;
+            var vertIndex = 0;
 
             foreach (var tri in solution)
             {
@@ -104,7 +104,7 @@ namespace PaperClone.Presentation
                 vertIndex += 3;
             }
 
-            Mesh mesh = new Mesh();
+            var mesh = new Mesh();
             mesh.SetVertices(vertices);
             mesh.SetTriangles(triangles, 0);
             mesh.RecalculateNormals();

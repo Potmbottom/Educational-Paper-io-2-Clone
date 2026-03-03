@@ -13,17 +13,17 @@ namespace PaperClone.Service
         private Vector3 _safeHomePosition;
         private AIState _currentState;
         
-        private const float ExpansionDistance = 25.0f; // How far to go OUT
-        private const float SideDistance = 15.0f;      // How far to go SIDEWAYS (Width)
-        private const float ReachThreshold = 2.0f;
-        private const int PanicTrailLength = 80;
-
+        private int _currentPanicThreshold; 
+        private int _waypointsVisited;
+        private int _waypointsToVisitBeforeReturn;
+        
+        private float _noiseOffset;
+        
         private enum AIState
         {
-            Idle,           // Safe at home
-            MovingOut,      // Step 1: Go deep into map
-            MovingSideways, // Step 2: Move lateral to create WIDTH
-            Returning       // Step 3: Go home to close loop
+            Idle,
+            Roaming,  
+            Returning
         }
 
         public AIInputProvider(PlayerModel model, LevelModel levelModel)
@@ -31,20 +31,26 @@ namespace PaperClone.Service
             _myModel = model;
             _levelModel = levelModel;
             _currentState = AIState.Idle;
+            _noiseOffset = Random.value * 100f;
+            ResetDecisionLogic();
         }
 
         public Vector3 GetDirection()
         {
             var currentPos = _myModel.Position.Value;
-            
             if (_myModel.Trail.Count == 0)
             {
+                if (_currentState != AIState.Idle)
+                {
+                    ResetDecisionLogic();
+                }
                 _currentState = AIState.Idle;
+                _safeHomePosition = currentPos;
             }
             
             if (_currentState != AIState.Idle && _currentState != AIState.Returning)
             {
-                if (_myModel.Trail.Count > PanicTrailLength)
+                if (_myModel.Trail.Count > _currentPanicThreshold)
                 {
                     _currentState = AIState.Returning;
                 }
@@ -53,23 +59,22 @@ namespace PaperClone.Service
             switch (_currentState)
             {
                 case AIState.Idle:
-                    _safeHomePosition = currentPos;
-                    PickOutboundTarget(currentPos);
-                    _currentState = AIState.MovingOut;
+                    PickNextRoamingTarget(currentPos);
+                    _currentState = AIState.Roaming;
                     break;
 
-                case AIState.MovingOut:
+                case AIState.Roaming:
                     if (HasReachedTarget(currentPos))
                     {
-                        PickSidewaysTarget(currentPos);
-                        _currentState = AIState.MovingSideways;
-                    }
-                    break;
-
-                case AIState.MovingSideways:
-                    if (HasReachedTarget(currentPos))
-                    {
-                        _currentState = AIState.Returning;
+                        _waypointsVisited++;
+                        if (_waypointsVisited >= _waypointsToVisitBeforeReturn)
+                        {
+                            _currentState = AIState.Returning;
+                        }
+                        else
+                        {
+                            PickNextRoamingTarget(currentPos);
+                        }
                     }
                     break;
 
@@ -77,39 +82,54 @@ namespace PaperClone.Service
                     _currentTarget = _safeHomePosition;
                     break;
             }
-
             
-            var direction = (_currentTarget - currentPos).normalized;
-            return ApplyCollisionAvoidance(currentPos, direction);
+            var baseDirection = (_currentTarget - currentPos).normalized;
+            
+            var noiseFreq = 0.5f;
+            var noiseAmp = 0.3f; 
+            var noise = Mathf.PerlinNoise(Time.time * noiseFreq, _noiseOffset) - 0.5f;
+            
+            var perp = Vector3.Cross(baseDirection, Vector3.up);
+            var noisyDirection = (baseDirection + (perp * noise * noiseAmp)).normalized;
+            return ApplyCollisionAvoidance(currentPos, noisyDirection);
+        }
+
+        private void ResetDecisionLogic()
+        {
+            _currentPanicThreshold = Random.Range(40, 120); 
+            _waypointsToVisitBeforeReturn = Random.Range(2, 5); 
+            _waypointsVisited = 0;
         }
 
         private bool HasReachedTarget(Vector3 currentPos)
         {
-            return Vector3.Distance(currentPos, _currentTarget) < ReachThreshold;
+            return Vector3.Distance(currentPos, _currentTarget) < 2.5f;
         }
 
-        private void PickOutboundTarget(Vector3 origin)
+        private void PickNextRoamingTarget(Vector3 origin)
         {
-            var randomDir = Random.insideUnitCircle.normalized;
-            var offset = new Vector3(randomDir.x, 0, randomDir.y) * ExpansionDistance;
-            
-            _currentTarget = ClampToMap(origin + offset);
-        }
+            var stepDistance = Random.Range(10.0f, 35.0f);
 
-        private void PickSidewaysTarget(Vector3 currentPos)
-        {
-            var vectorFromHome = (currentPos - _safeHomePosition).normalized;
-            var side = (Random.value > 0.5f) ? 1f : -1f;
-            var perpDir = Vector3.Cross(vectorFromHome, Vector3.up) * side;
-            var offset = perpDir * SideDistance;
-            var biasHome = (_safeHomePosition - currentPos).normalized * 2.0f;
-            
-            _currentTarget = ClampToMap(currentPos + offset + biasHome);
+            Vector3 direction;
+
+            if (_waypointsVisited == 0)
+            {
+                var randomDir = Random.insideUnitCircle.normalized;
+                direction = new Vector3(randomDir.x, 0, randomDir.y);
+            }
+            else
+            {
+                var randomDir = Random.insideUnitCircle.normalized;
+                direction = new Vector3(randomDir.x, 0, randomDir.y);
+            }
+
+            var proposedPos = origin + (direction * stepDistance);
+            _currentTarget = ClampToMap(proposedPos);
         }
 
         private Vector3 ClampToMap(Vector3 target)
         {
-            var b = _levelModel.Bounds * 0.9f;
+            var b = _levelModel.Bounds * 0.95f;
             target.x = Mathf.Clamp(target.x, -b, b);
             target.z = Mathf.Clamp(target.z, -b, b);
             return target;
@@ -117,20 +137,21 @@ namespace PaperClone.Service
 
         private Vector3 ApplyCollisionAvoidance(Vector3 currentPos, Vector3 desiredDir)
         {
-            var lookAhead = currentPos + desiredDir * 3.0f;
+            var lookAheadDist = 4.0f;
+            var lookAhead = currentPos + desiredDir * lookAheadDist;
 
             if (IsSelfIntersecting(currentPos, lookAhead))
             {
-                return Vector3.Cross(desiredDir, Vector3.up).normalized;
+                var turnDir = (Time.time % 1.0f > 0.5f) ? 1.0f : -1.0f;
+                return (Vector3.Cross(desiredDir, Vector3.up) * turnDir).normalized;
             }
             return desiredDir;
         }
 
         private bool IsSelfIntersecting(Vector3 start, Vector3 end)
         {
-            if (_myModel.Trail.Count < 5) return false;
-
-            for (var i = 0; i < _myModel.Trail.Count - 5; i++)
+            if (_myModel.Trail.Count < 10) return false;
+            for (var i = 0; i < _myModel.Trail.Count - 8; i++)
             {
                 var p1 = _myModel.Trail[i];
                 var p2 = _myModel.Trail[i + 1];
